@@ -1,6 +1,0 @@
-@task_processor_HostAddress = http://localhost:5028
-
-GET {{task_processor_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###
