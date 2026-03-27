@@ -1,3 +1,3 @@
 <Solution>
-  <Project Path="task-processor/task-processor.csproj" />
+  <Project Path="src/task-processor.csproj" />
 </Solution>
