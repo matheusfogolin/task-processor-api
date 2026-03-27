@@ -1,10 +1,21 @@
-﻿<Solution>
-  <Folder Name="/src/">
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/1 - Presentation/">
     <Project Path="src/TaskProcessor.Presentation/TaskProcessor.Presentation.csproj" />
-    <Project Path="src/TaskProcessor.Application/TaskProcessor.Application.csproj" />
+  </Folder>
+  <Folder Name="/src/2 - Infrastructure/">
     <Project Path="src/TaskProcessor.Infrastructure/TaskProcessor.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/3 - Application/">
+    <Project Path="src/TaskProcessor.Application/TaskProcessor.Application.csproj" />
+  </Folder>
+  <Folder Name="/src/4 - Domain/">
     <Project Path="src/TaskProcessor.Domain/TaskProcessor.Domain.csproj" />
+  </Folder>
+  <Folder Name="/src/5 - Worker/">
     <Project Path="src/TaskProcessor.Worker/TaskProcessor.Worker.csproj" />
+  </Folder>
+  <Folder Name="/src/Tests/">
     <Project Path="src/TaskProcessor.Tests/TaskProcessor.Tests.csproj" />
   </Folder>
 </Solution>
