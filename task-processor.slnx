@@ -1,7 +1,7 @@
-<Solution>
+﻿<Solution>
   <Folder Name="/src/" />
   <Folder Name="/src/1 - Presentation/">
-    <Project Path="src/TaskProcessor.Presentation/TaskProcessor.Presentation.csproj" />
+    <Project Path="src/task-processor/task-processor.csproj" />
   </Folder>
   <Folder Name="/src/2 - Infrastructure/">
     <Project Path="src/TaskProcessor.Infrastructure/TaskProcessor.Infrastructure.csproj" />

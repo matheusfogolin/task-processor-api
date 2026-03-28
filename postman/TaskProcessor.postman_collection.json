@@ -1,0 +1,113 @@
+{
+	"info": {
+		"name": "Task Processor API",
+		"description": "Collection para testar a Task Processor API localmente",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:8080",
+			"type": "string"
+		},
+		{
+			"key": "jobId",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Create Job",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"if (pm.response.code === 201) {",
+							"    var json = pm.response.json();",
+							"    pm.collectionVariables.set('jobId', json.id);",
+							"    pm.test('Job criado com sucesso', function () {",
+							"        pm.expect(json.id).to.be.a('string');",
+							"        pm.expect(json.type).to.be.a('string');",
+							"    });",
+							"}"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"type\": \"email-notification\",\n    \"payload\": \"{\\\"to\\\": \\\"user@example.com\\\", \\\"subject\\\": \\\"Test\\\"}\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/jobs",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "jobs"]
+				},
+				"description": "Cria um novo job. O Id retornado e salvo automaticamente na variavel jobId."
+			},
+			"response": []
+		},
+		{
+			"name": "Get Job by Id",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/api/jobs/{{jobId}}",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "jobs", "{{jobId}}"]
+				},
+				"description": "Busca o job pelo Id. Usa automaticamente o Id do ultimo job criado."
+			},
+			"response": []
+		},
+		{
+			"name": "Get Job by Id (not found)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/api/jobs/00000000-0000-0000-0000-000000000000",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "jobs", "00000000-0000-0000-0000-000000000000"]
+				},
+				"description": "Testa o cenario de job nao encontrado (404)."
+			},
+			"response": []
+		},
+		{
+			"name": "Create Job (validation error)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"type\": \"\",\n    \"payload\": \"\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/jobs",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "jobs"]
+				},
+				"description": "Testa validacao com campos invalidos (400)."
+			},
+			"response": []
+		}
+	]
+}
