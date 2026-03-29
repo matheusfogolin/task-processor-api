@@ -28,20 +28,39 @@ public sealed class JobRepository(MongoDbContext context) : IJobRepository
 
         if (result.MatchedCount == 0)
             throw new InvalidOperationException(
-                $"Job {job.Id} não encontrado para atualização.");
+                $"Job {job.Id} nao encontrado para atualizacao.");
     }
 
-    public async Task<Job?> AcquireNextPendingJobAsync(
+    public async Task<IReadOnlyList<Job>> AcquireNextPendingJobsBatchAsync(
         string workerId,
         TimeSpan leaseDuration,
+        int batchSize,
         CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
+        var (filter, update, options) = BuildAcquireLeaseOperation(workerId, leaseDuration, now);
 
+        var jobs = new List<Job>(batchSize);
+
+        for (var i = 0; i < batchSize; i++)
+        {
+            var job = await context.Jobs.FindOneAndUpdateAsync(filter, update, options, ct);
+            if (job is null)
+                break;
+
+            jobs.Add(job);
+        }
+
+        return jobs;
+    }
+
+    private static (FilterDefinition<Job> filter, UpdateDefinition<Job> update, FindOneAndUpdateOptions<Job> options) BuildAcquireLeaseOperation(
+        string workerId, 
+        TimeSpan leaseDuration, 
+        DateTime now)
+    {
         var pendingFilter = Builders<Job>.Filter.Eq(j => j.Status, EJobStatus.Pending);
-
         var retryEligibleFilter = BuildRetryEligibleFilter(now);
-
         var statusFilter = Builders<Job>.Filter.Or(pendingFilter, retryEligibleFilter);
 
         var leaseFilter = Builders<Job>.Filter.Or(
@@ -62,7 +81,7 @@ public sealed class JobRepository(MongoDbContext context) : IJobRepository
             Sort = Builders<Job>.Sort.Ascending(j => j.CreatedAt)
         };
 
-        return await context.Jobs.FindOneAndUpdateAsync(filter, update, options, ct);
+        return (filter, update, options);
     }
 
     private static FilterDefinition<Job> BuildRetryEligibleFilter(DateTime now)

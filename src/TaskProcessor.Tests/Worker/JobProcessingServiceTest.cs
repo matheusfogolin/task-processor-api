@@ -1,9 +1,11 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Moq;
 using TaskProcessor.Domain.Aggregates.JobAggregate;
 using TaskProcessor.Tests.Factories;
 using TaskProcessor.Worker.Services;
+using TaskProcessor.Worker.Settings;
 
 namespace TaskProcessor.Tests.Worker;
 
@@ -17,8 +19,12 @@ public class JobProcessingServiceTest
     {
         _repositoryMock = new Mock<IJobRepository>();
         _loggerMock = new Mock<ILogger<JobProcessingService>>();
+
+        var settings = Options.Create(new JobProcessingSettings { MaxParallelJobs = 10 });
+
         _sut = new JobProcessingService(
             _repositoryMock.Object,
+            settings,
             _loggerMock.Object);
     }
 
@@ -30,12 +36,13 @@ public class JobProcessingServiceTest
         using var cts = new CancellationTokenSource();
 
         _repositoryMock
-            .SetupSequence(x => x.AcquireNextPendingJobAsync(
+            .SetupSequence(x => x.AcquireNextPendingJobsBatchAsync(
                 It.IsAny<string>(),
                 It.IsAny<TimeSpan>(),
+                It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(job)
-            .ReturnsAsync((Job?)null);
+            .ReturnsAsync(new List<Job> { job })
+            .ReturnsAsync(new List<Job>());
 
         // Act
         await _sut.StartAsync(cts.Token);
@@ -61,12 +68,13 @@ public class JobProcessingServiceTest
         using var cts = new CancellationTokenSource();
 
         _repositoryMock
-            .SetupSequence(x => x.AcquireNextPendingJobAsync(
+            .SetupSequence(x => x.AcquireNextPendingJobsBatchAsync(
                 It.IsAny<string>(),
                 It.IsAny<TimeSpan>(),
+                It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(job)
-            .ReturnsAsync((Job?)null);
+            .ReturnsAsync(new List<Job> { job })
+            .ReturnsAsync(new List<Job>());
 
         _repositoryMock
             .Setup(x => x.UpdateAsync(It.IsAny<Job>(), It.IsAny<CancellationToken>()))
@@ -94,11 +102,12 @@ public class JobProcessingServiceTest
         using var cts = new CancellationTokenSource();
 
         _repositoryMock
-            .Setup(x => x.AcquireNextPendingJobAsync(
+            .Setup(x => x.AcquireNextPendingJobsBatchAsync(
                 It.IsAny<string>(),
                 It.IsAny<TimeSpan>(),
+                It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Job?)null);
+            .ReturnsAsync(new List<Job>());
 
         // Act
         await _sut.StartAsync(cts.Token);
@@ -118,11 +127,12 @@ public class JobProcessingServiceTest
         using var cts = new CancellationTokenSource();
 
         _repositoryMock
-            .Setup(x => x.AcquireNextPendingJobAsync(
+            .Setup(x => x.AcquireNextPendingJobsBatchAsync(
                 It.IsAny<string>(),
                 It.IsAny<TimeSpan>(),
+                It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Job?)null);
+            .ReturnsAsync(new List<Job>());
 
         // Act
         await _sut.StartAsync(cts.Token);
@@ -146,12 +156,13 @@ public class JobProcessingServiceTest
         using var cts = new CancellationTokenSource();
 
         _repositoryMock
-            .SetupSequence(x => x.AcquireNextPendingJobAsync(
+            .SetupSequence(x => x.AcquireNextPendingJobsBatchAsync(
                 It.IsAny<string>(),
                 It.IsAny<TimeSpan>(),
+                It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("MongoDB indisponivel"))
-            .ReturnsAsync((Job?)null);
+            .ReturnsAsync(new List<Job>());
 
         // Act
         await _sut.StartAsync(cts.Token);
@@ -164,15 +175,16 @@ public class JobProcessingServiceTest
         await act.Should().NotThrowAsync();
 
         _repositoryMock.Verify(
-            x => x.AcquireNextPendingJobAsync(
+            x => x.AcquireNextPendingJobsBatchAsync(
                 It.IsAny<string>(),
                 It.IsAny<TimeSpan>(),
+                It.IsAny<int>(),
                 It.IsAny<CancellationToken>()),
             Times.AtLeast(2));
     }
 
     [Fact]
-    public async Task ExecuteAsync_MultipleJobsAvailable_ProcessesSequentially()
+    public async Task ExecuteAsync_BatchWithMultipleJobs_ProcessesAllJobsInBatch()
     {
         // Arrange
         var job1 = JobFactory.InProcessing();
@@ -180,17 +192,17 @@ public class JobProcessingServiceTest
         using var cts = new CancellationTokenSource();
 
         _repositoryMock
-            .SetupSequence(x => x.AcquireNextPendingJobAsync(
+            .SetupSequence(x => x.AcquireNextPendingJobsBatchAsync(
                 It.IsAny<string>(),
                 It.IsAny<TimeSpan>(),
+                It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(job1)
-            .ReturnsAsync(job2)
-            .ReturnsAsync((Job?)null);
+            .ReturnsAsync(new List<Job> { job1, job2 })
+            .ReturnsAsync(new List<Job>());
 
         // Act
         await _sut.StartAsync(cts.Token);
-        await Task.Delay(5000);
+        await Task.Delay(3000);
         await cts.CancelAsync();
         await _sut.StopAsync(CancellationToken.None);
 
@@ -201,5 +213,138 @@ public class JobProcessingServiceTest
         _repositoryMock.Verify(
             x => x.UpdateAsync(It.IsAny<Job>(), It.IsAny<CancellationToken>()),
             Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_OneJobInBatchFails_OtherJobStillCompletes()
+    {
+        // Arrange
+        var jobOk = JobFactory.InProcessing();
+        var jobFail = JobFactory.InProcessing();
+        using var cts = new CancellationTokenSource();
+
+        _repositoryMock
+            .SetupSequence(x => x.AcquireNextPendingJobsBatchAsync(
+                It.IsAny<string>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Job> { jobOk, jobFail })
+            .ReturnsAsync(new List<Job>());
+
+        _repositoryMock
+            .Setup(x => x.UpdateAsync(
+                It.Is<Job>(j => j.Id == jobFail.Id),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Falha simulada no UpdateAsync"));
+
+        // Act
+        await _sut.StartAsync(cts.Token);
+        await Task.Delay(3000);
+        await cts.CancelAsync();
+        await _sut.StopAsync(CancellationToken.None);
+
+        // Assert
+        jobOk.Status.Should().Be(EJobStatus.Completed);
+
+
+        jobFail.Status.Should().Be(EJobStatus.Completed);
+
+        _repositoryMock.Verify(
+            x => x.UpdateAsync(
+                It.Is<Job>(j => j.Id == jobOk.Id && j.Status == EJobStatus.Completed),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_JobInInvalidStateForCompletion_LogsWarningAndSkipsUpdate()
+    {
+        // Arrange
+        var job = JobFactory.InCompleted();
+        using var cts = new CancellationTokenSource();
+
+        _repositoryMock
+            .SetupSequence(x => x.AcquireNextPendingJobsBatchAsync(
+                It.IsAny<string>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Job> { job })
+            .ReturnsAsync(new List<Job>());
+
+        // Act
+        await _sut.StartAsync(cts.Token);
+        await Task.Delay(3000);
+        await cts.CancelAsync();
+        await _sut.StopAsync(CancellationToken.None);
+
+        // Assert — UpdateAsync nunca chamado pois MarkAsCompleted falhou
+        _repositoryMock.Verify(
+            x => x.UpdateAsync(It.IsAny<Job>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MarkAsFailedInvalidTransition_LogsWarningAndSkipsFailureUpdate()
+    {
+        // Arrange
+        var job = JobFactory.InProcessing();
+        using var cts = new CancellationTokenSource();
+
+        _repositoryMock
+            .SetupSequence(x => x.AcquireNextPendingJobsBatchAsync(
+                It.IsAny<string>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Job> { job })
+            .ReturnsAsync(new List<Job>());
+
+        _repositoryMock
+            .Setup(x => x.UpdateAsync(It.IsAny<Job>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Falha simulada no UpdateAsync"));
+
+        // Act
+        await _sut.StartAsync(cts.Token);
+        await Task.Delay(3000);
+        await cts.CancelAsync();
+        await _sut.StopAsync(CancellationToken.None);
+
+        // Assert
+        _repositoryMock.Verify(
+            x => x.UpdateAsync(It.IsAny<Job>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MaxParallelJobsPassedToBatchMethod()
+    {
+        // Arrange
+        var expectedBatchSize = 10;
+        using var cts = new CancellationTokenSource();
+
+        _repositoryMock
+            .Setup(x => x.AcquireNextPendingJobsBatchAsync(
+                It.IsAny<string>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Job>());
+
+        // Act
+        await _sut.StartAsync(cts.Token);
+        await Task.Delay(500);
+        await cts.CancelAsync();
+        await _sut.StopAsync(CancellationToken.None);
+
+        // Assert
+        _repositoryMock.Verify(
+            x => x.AcquireNextPendingJobsBatchAsync(
+                It.IsAny<string>(),
+                It.IsAny<TimeSpan>(),
+                expectedBatchSize,
+                It.IsAny<CancellationToken>()),
+            Times.AtLeastOnce);
     }
 }

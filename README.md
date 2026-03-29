@@ -59,6 +59,7 @@ docker compose logs -f api
 | FluentValidation | Validação de requests |
 | xUnit | Framework de testes |
 | Moq | Mocking para testes unitários |
+| Polly | Retry policy com exponential backoff (publicacao RabbitMQ) |
 | FluentAssertions | Assertions expressivas nos testes |
 
 ## Arquitetura
@@ -79,7 +80,10 @@ Presentation (API)  →  Application  →  Domain  ←  Infrastructure
 - **Mensageria com RabbitMQ** — Desacopla a criação do job (API publica mensagem) do processamento (Worker consome). A API responde imediatamente sem esperar o processamento.
 - **Lease atômico no MongoDB** — O BackgroundService usa `FindOneAndUpdate` para adquirir jobs com lock atômico (`LockedBy`/`LockedUntil`), evitando processamento duplicado mesmo com múltiplas instâncias do Worker.
 - **Result Pattern** — Erros de negócio retornam `Result<T>` ao invés de lançar exceções. Fluxo explícito e previsível.
+- **Dead Letter Queue e retry nativo** — Mensagens que falham no consumer são reenviadas automaticamente via DLX (Dead Letter Exchange) com TTL configurável. Após exceder o máximo de tentativas, vão para uma fila deadletter. Topologia: 3 exchanges + 3 filas (`jobs`, `jobs-retry`, `jobs-deadletter`).
+- **Retry na publicacao com Polly** — O RabbitMqPublisher utiliza Polly para retry com exponential backoff e jitter ao publicar mensagens. Trata falhas transientes de conexao (AlreadyClosedException, OperationInterruptedException, BrokerUnreachableException), forcando reconexao a cada tentativa. Parametros configuraveis via `appsettings.json` (PublishMaxRetries, PublishRetryBaseDelayMs).
 - **Dockerfile multi-stage** — Um único Dockerfile com targets `api` e `worker`, compartilhando o build stage para otimizar o tamanho da imagem.
+- **Processamento paralelo de jobs** — O `JobProcessingService` busca até `MaxParallelJobs` jobs pendentes por ciclo e os processa em paralelo via `Task.WhenAll`. O lease atômico no MongoDB garante que dois workers nunca processam o mesmo job. `MaxParallelJobs` (padrão: `10`) é configurável via `appsettings.json` (seção `"JobProcessing"`) ou variável de ambiente `JobProcessing__MaxParallelJobs`.
 
 ## Fluxo da Aplicação
 
@@ -207,9 +211,10 @@ src/
 │   ├── Services/                #   JobProcessingService (polling + lease)
 │   └── Program.cs               #   Configuração e DI
 │
-└── TaskProcessor.Tests/         # Tests — Testes unitários
+└── TaskProcessor.Tests/         # Tests -- Testes unitarios
     ├── Domain/                  #   Testes da entidade Job e Result<T>
     ├── Application/             #   Testes dos Handlers e Validators
+    ├── Infrastructure/          #   Testes do RabbitMqConsumer e RabbitMqPublisher
     ├── Worker/                  #   Testes do Consumer e BackgroundService
     └── Presentation/            #   Testes do Controller e Middleware
 ```
@@ -224,12 +229,13 @@ dotnet test
 dotnet test --filter "FullyQualifiedName~CreateJobHandlerTest"
 ```
 
-O projeto possui 67 testes unitários cobrindo todas as camadas:
+O projeto possui 90 testes unitarios cobrindo todas as camadas:
 
 | Camada | O que testa |
 |--------|-------------|
 | Domain | Entidade Job (criação, transições de status, retry), Result\<T\> |
 | Application | CreateJobHandler, GetJobByIdHandler, CreateJobValidator |
+| Infrastructure | RabbitMqConsumer (GetRetryCount com x-death headers), RabbitMqPublisher (retry policy com Polly) |
 | Worker | JobCreationConsumer, JobProcessingService |
 | Presentation | JobController, GlobalExceptionMiddleware |
 
@@ -240,3 +246,4 @@ Frameworks: **xUnit** + **Moq** + **FluentAssertions**
 - **Lease atômico** — Os campos `LockedBy` e `LockedUntil` são preenchidos exclusivamente pelo MongoDB `FindOneAndUpdate` no repository. A entidade Job não gerencia lease.
 - **Result Pattern** — Erros de negócio usam `Result<T>` (em `Domain/Shared/`). Exceções são reservadas para falhas inesperadas.
 - **MaxRetries configurável** — Definido em `appsettings.json` na seção `"Job"`, não vem da requisição do cliente. O handler resolve via `IOptions<JobSettings>`.
+- **MaxParallelJobs configurável** — Definido em `appsettings.json` na seção `"JobProcessing"` (padrão: `10`). Também configurável via variável de ambiente `JobProcessing__MaxParallelJobs`. Controla quantos jobs o Worker processa em paralelo por ciclo de polling.

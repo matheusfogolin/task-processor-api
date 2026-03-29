@@ -1,11 +1,12 @@
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using TaskProcessor.Domain.Aggregates.JobAggregate;
+using TaskProcessor.Worker.Settings;
 
 namespace TaskProcessor.Worker.Services;
 
 public sealed class JobProcessingService(
     IJobRepository jobRepository,
+    IOptions<JobProcessingSettings> settings,
     ILogger<JobProcessingService> logger)
     : BackgroundService
 {
@@ -14,28 +15,34 @@ public sealed class JobProcessingService(
     private static readonly TimeSpan ProcessingDelay = TimeSpan.FromSeconds(1);
     private static readonly string WorkerId = $"worker-{Environment.MachineName}";
 
+    private readonly int _maxParallelJobs = settings.Value.MaxParallelJobs > 0
+        ? settings.Value.MaxParallelJobs
+        : throw new ArgumentOutOfRangeException(nameof(settings), "MaxParallelJobs deve ser maior que zero.");
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation(
-            "JobProcessingService iniciado. WorkerId={WorkerId} PollingInterval={PollingInterval}s LeaseDuration={LeaseDuration}s",
+            "JobProcessingService iniciado. WorkerId={WorkerId} PollingInterval={PollingInterval}s LeaseDuration={LeaseDuration}s MaxParallelJobs={MaxParallelJobs}",
             WorkerId,
             PollingInterval.TotalSeconds,
-            LeaseDuration.TotalSeconds);
+            LeaseDuration.TotalSeconds,
+            _maxParallelJobs);
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                var job = await jobRepository.AcquireNextPendingJobAsync(
-                    WorkerId, LeaseDuration, stoppingToken);
+                var jobs = await jobRepository.AcquireNextPendingJobsBatchAsync(
+                    WorkerId, LeaseDuration, _maxParallelJobs, stoppingToken);
 
-                if (job is null)
+                if (jobs.Count == 0)
                 {
                     await Task.Delay(PollingInterval, stoppingToken);
                     continue;
                 }
 
-                await ProcessJobAsync(job, stoppingToken);
+                await Task.WhenAll(jobs.Select(j => ProcessJobAsync(j, stoppingToken)));
+                await Task.Delay(PollingInterval, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -76,7 +83,7 @@ public sealed class JobProcessingService(
             if (completeResult.IsError)
             {
                 logger.LogWarning(
-                    "Falha ao marcar job como concluído. JobId={JobId} Erro={Erro}",
+                    "Falha ao marcar job como concluido. JobId={JobId} Erro={Erro}",
                     job.Id,
                     completeResult.FirstError.Description);
                 return;
@@ -85,7 +92,7 @@ public sealed class JobProcessingService(
             await jobRepository.UpdateAsync(job, ct);
 
             logger.LogInformation(
-                "Job concluído com sucesso. JobId={JobId}",
+                "Job concluido com sucesso. JobId={JobId}",
                 job.Id);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -109,7 +116,16 @@ public sealed class JobProcessingService(
                 return;
             }
 
-            await jobRepository.UpdateAsync(job, ct);
+            try
+            {
+                await jobRepository.UpdateAsync(job, ct);
+            }
+            catch (Exception updateEx)
+            {
+                logger.LogError(updateEx,
+                    "Falha ao persistir status Failed do job. JobId={JobId}",
+                    job.Id);
+            }
         }
     }
 }
