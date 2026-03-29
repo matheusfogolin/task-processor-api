@@ -55,81 +55,26 @@ public class JobTests
     }
 
     [Fact]
-    public void MarkAsProcessing_FromPending_ShouldSucceed()
-    {
-        var job = JobFactory.Valid().Value;
-
-        var result = job.MarkAsProcessing();
-
-        result.IsError.Should().BeFalse();
-        job.Status.Should().Be(EJobStatus.Processing);
-    }
-
-    [Fact]
-    public void MarkAsProcessing_FromFailed_ShouldSucceed()
-    {
-        var job = JobFactory.InFailed();
-
-        var result = job.MarkAsProcessing();
-
-        result.IsError.Should().BeFalse();
-        job.Status.Should().Be(EJobStatus.Processing);
-    }
-
-    [Fact]
-    public void MarkAsProcessing_FromCompleted_ShouldReturnError()
-    {
-        var job = JobFactory.InCompleted();
-
-        var result = job.MarkAsProcessing();
-
-        result.IsError.Should().BeTrue();
-        result.FirstError.Should().Be(JobErrors.InvalidStatusTransition);
-    }
-
-    [Fact]
-    public void MarkAsProcessing_FromProcessing_ShouldReturnError()
-    {
-        var job = JobFactory.InProcessing();
-
-        var result = job.MarkAsProcessing();
-
-        result.IsError.Should().BeTrue();
-        result.FirstError.Should().Be(JobErrors.InvalidStatusTransition);
-    }
-
-    [Fact]
     public void MarkAsCompleted_FromProcessing_ShouldSucceed()
     {
         var job = JobFactory.InProcessing();
 
-        var result = job.MarkAsCompleted();
+        job.MarkAsCompleted();
 
-        result.IsError.Should().BeFalse();
         job.Status.Should().Be(EJobStatus.Completed);
         job.CompletedAt.Should().NotBeNull();
+        job.UpdatedAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(1));
     }
 
     [Fact]
-    public void MarkAsCompleted_FromPending_ShouldReturnError()
+    public void MarkAsCompleted_FromPending_ShouldSucceed()
     {
         var job = JobFactory.Valid().Value;
 
-        var result = job.MarkAsCompleted();
+        job.MarkAsCompleted();
 
-        result.IsError.Should().BeTrue();
-        result.FirstError.Should().Be(JobErrors.InvalidStatusTransition);
-    }
-
-    [Fact]
-    public void MarkAsCompleted_FromCompleted_ShouldReturnError()
-    {
-        var job = JobFactory.InCompleted();
-
-        var result = job.MarkAsCompleted();
-
-        result.IsError.Should().BeTrue();
-        result.FirstError.Should().Be(JobErrors.InvalidStatusTransition);
+        job.Status.Should().Be(EJobStatus.Completed);
+        job.CompletedAt.Should().NotBeNull();
     }
 
     [Fact]
@@ -158,23 +103,11 @@ public class JobTests
     }
 
     [Fact]
-    public void MarkAsFailed_FromPending_ShouldReturnError()
-    {
-        var job = JobFactory.Valid().Value;
-
-        var result = job.MarkAsFailed("Erro qualquer");
-
-        result.IsError.Should().BeTrue();
-        result.FirstError.Should().Be(JobErrors.InvalidStatusTransition);
-    }
-
-    [Fact]
     public void MarkAsFailed_ShouldIncrementRetryCount()
     {
         var job = JobFactory.InProcessing();
 
         job.MarkAsFailed("Primeira falha");
-        job.MarkAsProcessing();
         job.MarkAsFailed("Segunda falha");
 
         job.RetryCount.Should().Be(2);
@@ -206,7 +139,6 @@ public class JobTests
     public void IsEligibleForRetry_WhenMaxRetriesReached_ShouldReturnFalse()
     {
         var job = JobFactory.WithMaxRetries(1).Value;
-        job.MarkAsProcessing();
         job.MarkAsFailed("Falha");
 
         var eligible = job.IsEligibleForRetry();

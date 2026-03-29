@@ -258,66 +258,6 @@ public class JobProcessingServiceTest
     }
 
     [Fact]
-    public async Task ExecuteAsync_JobInInvalidStateForCompletion_LogsWarningAndSkipsUpdate()
-    {
-        // Arrange
-        var job = JobFactory.InCompleted();
-        using var cts = new CancellationTokenSource();
-
-        _repositoryMock
-            .SetupSequence(x => x.AcquireNextPendingJobsBatchAsync(
-                It.IsAny<string>(),
-                It.IsAny<TimeSpan>(),
-                It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<Job> { job })
-            .ReturnsAsync(new List<Job>());
-
-        // Act
-        await _sut.StartAsync(cts.Token);
-        await Task.Delay(3000);
-        await cts.CancelAsync();
-        await _sut.StopAsync(CancellationToken.None);
-
-        // Assert — UpdateAsync nunca chamado pois MarkAsCompleted falhou
-        _repositoryMock.Verify(
-            x => x.UpdateAsync(It.IsAny<Job>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_MarkAsFailedInvalidTransition_LogsWarningAndSkipsFailureUpdate()
-    {
-        // Arrange
-        var job = JobFactory.InProcessing();
-        using var cts = new CancellationTokenSource();
-
-        _repositoryMock
-            .SetupSequence(x => x.AcquireNextPendingJobsBatchAsync(
-                It.IsAny<string>(),
-                It.IsAny<TimeSpan>(),
-                It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<Job> { job })
-            .ReturnsAsync(new List<Job>());
-
-        _repositoryMock
-            .Setup(x => x.UpdateAsync(It.IsAny<Job>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("Falha simulada no UpdateAsync"));
-
-        // Act
-        await _sut.StartAsync(cts.Token);
-        await Task.Delay(3000);
-        await cts.CancelAsync();
-        await _sut.StopAsync(CancellationToken.None);
-
-        // Assert
-        _repositoryMock.Verify(
-            x => x.UpdateAsync(It.IsAny<Job>(), It.IsAny<CancellationToken>()),
-            Times.Once);
-    }
-
-    [Fact]
     public async Task ExecuteAsync_MaxParallelJobsPassedToBatchMethod()
     {
         // Arrange

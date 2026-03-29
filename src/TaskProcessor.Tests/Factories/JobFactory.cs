@@ -33,12 +33,13 @@ public static class JobFactory
         return Job.Create(Guid.CreateVersion7(), "EnviarEmail", "{\"data\": \"test\"}", maxRetries);
     }
 
-    public static Job InProcessing()
-    {
-        var job = Valid().Value;
-        job.MarkAsProcessing();
-        return job;
-    }
+    public static Job InProcessing() =>
+        Job.CreateWithStatus(
+            Guid.CreateVersion7(),
+            "EnviarEmail",
+            "{\"to\": \"user@example.com\", \"subject\": \"Teste\"}",
+            3,
+            EJobStatus.Processing);
 
     public static Job InFailed(string errorMessage = "Falha temporária")
     {

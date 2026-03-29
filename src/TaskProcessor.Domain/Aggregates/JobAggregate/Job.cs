@@ -54,34 +54,24 @@ public sealed class Job
         return new Job(id, type, payload, maxRetries);
     }
 
-    public Result<Success> MarkAsProcessing()
+    internal static Job CreateWithStatus(Guid id, string type, string payload, int maxRetries, EJobStatus status)
     {
-        if (Status != EJobStatus.Pending && Status != EJobStatus.Failed)
-            return JobErrors.InvalidStatusTransition;
-
-        Status = EJobStatus.Processing;
-        UpdatedAt = DateTime.UtcNow;
-        return Result.Ok;
+        var job = new Job(id, type, payload, maxRetries);
+        job.Status = status;
+        return job;
     }
 
-    public Result<Success> MarkAsCompleted()
+    public void MarkAsCompleted()
     {
-        if (Status != EJobStatus.Processing)
-            return JobErrors.InvalidStatusTransition;
-
         Status = EJobStatus.Completed;
         CompletedAt = DateTime.UtcNow;
         LockedBy = null;
         LockedUntil = null;
         UpdatedAt = DateTime.UtcNow;
-        return Result.Ok;
     }
 
     public Result<Success> MarkAsFailed(string errorMessage)
     {
-        if (Status != EJobStatus.Processing)
-            return JobErrors.InvalidStatusTransition;
-
         if (string.IsNullOrWhiteSpace(errorMessage))
             return JobErrors.ErrorMessageRequired;
 

@@ -79,21 +79,9 @@ public sealed class JobProcessingService(
         {
             await Task.Delay(ProcessingDelay, ct);
 
-            var completeResult = job.MarkAsCompleted();
-            if (completeResult.IsError)
-            {
-                logger.LogWarning(
-                    "Falha ao marcar job como concluido. JobId={JobId} Erro={Erro}",
-                    job.Id,
-                    completeResult.FirstError.Description);
-                return;
-            }
-
+            job.MarkAsCompleted();
             await jobRepository.UpdateAsync(job, ct);
-
-            logger.LogInformation(
-                "Job concluido com sucesso. JobId={JobId}",
-                job.Id);
+            logger.LogInformation("Job concluido com sucesso. JobId={JobId}", job.Id);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -101,6 +89,14 @@ public sealed class JobProcessingService(
         }
         catch (Exception ex)
         {
+            if (job.Status == EJobStatus.Completed)
+            {
+                logger.LogError(ex,
+                    "Falha ao persistir Completed. JobId={JobId}. Job sera reprocessado apos expiração do lease.",
+                    job.Id);
+                return;
+            }
+
             logger.LogError(ex,
                 "Falha ao processar job. JobId={JobId} Type={Type}",
                 job.Id,
