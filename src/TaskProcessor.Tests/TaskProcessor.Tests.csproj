@@ -9,6 +9,8 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Polly.Core" Version="8.*" />
+    <PackageReference Include="RabbitMQ.Client" Version="7.2.1" />
     <PackageReference Include="FluentAssertions" Version="8.3.0" />
     <PackageReference Include="FluentValidation" Version="12.1.1" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
@@ -20,6 +22,7 @@
   <ItemGroup>
     <ProjectReference Include="..\TaskProcessor.Domain\TaskProcessor.Domain.csproj" />
     <ProjectReference Include="..\TaskProcessor.Application\TaskProcessor.Application.csproj" />
+    <ProjectReference Include="..\TaskProcessor.Infrastructure\TaskProcessor.Infrastructure.csproj" />
     <ProjectReference Include="..\TaskProcessor.Worker\TaskProcessor.Worker.csproj" />
     <ProjectReference Include="..\task-processor\task-processor.csproj" />
   </ItemGroup>

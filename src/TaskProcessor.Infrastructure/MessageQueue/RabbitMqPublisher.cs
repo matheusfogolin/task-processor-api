@@ -1,7 +1,12 @@
 using System.Text.Json;
+using System.IO;
+using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Polly;
+using Polly.Retry;
 using RabbitMQ.Client;
+using RabbitMQ.Client.Exceptions;
 using TaskProcessor.Domain.Ports.MessageQueue;
 
 namespace TaskProcessor.Infrastructure.MessageQueue;
@@ -12,28 +17,57 @@ public sealed class RabbitMqPublisher(
     : IMessageQueuePublisher, IAsyncDisposable
 {
     private readonly SemaphoreSlim _initLock = new(1, 1);
+    private readonly Lazy<ResiliencePipeline> _retryPipeline = new(() =>
+        new ResiliencePipelineBuilder()
+            .AddRetry(new RetryStrategyOptions
+            {
+                ShouldHandle = new PredicateBuilder()
+                    .Handle<AlreadyClosedException>()
+                    .Handle<OperationInterruptedException>()
+                    .Handle<BrokerUnreachableException>()
+                    .Handle<IOException>()
+                    .Handle<SocketException>(),
+                BackoffType = DelayBackoffType.Exponential,
+                UseJitter = true,
+                MaxRetryAttempts = settings.Value.PublishMaxRetries,
+                Delay = TimeSpan.FromMilliseconds(settings.Value.PublishRetryBaseDelayMs),
+                OnRetry = args =>
+                {
+                    logger.LogWarning(
+                        "Tentativa de publicação {AttemptNumber} falhou. Retentando em {RetryDelay}. Erro: {ExceptionMessage}",
+                        args.AttemptNumber + 1,
+                        args.RetryDelay,
+                        args.Outcome.Exception?.Message);
+                    return ValueTask.CompletedTask;
+                }
+            })
+            .Build());
+
     private IConnection? _connection;
     private IChannel? _channel;
 
     public async Task PublishAsync<T>(T message, CancellationToken ct = default)
     {
-        var channel = await EnsureChannelCreatedAsync(ct);
-
         var body = JsonSerializer.SerializeToUtf8Bytes(message);
 
-        var properties = new BasicProperties
+        await _retryPipeline.Value.ExecuteAsync(async token =>
         {
-            Persistent = true,
-            ContentType = "application/json"
-        };
+            var channel = await EnsureChannelCreatedAsync(token);
 
-        await channel.BasicPublishAsync(
-            exchange: string.Empty,
-            routingKey: settings.Value.QueueName,
-            mandatory: false,
-            basicProperties: properties,
-            body: body,
-            cancellationToken: ct);
+            var properties = new BasicProperties
+            {
+                Persistent = true,
+                ContentType = "application/json"
+            };
+
+            await channel.BasicPublishAsync(
+                exchange: settings.Value.QueueName,
+                routingKey: settings.Value.QueueName,
+                mandatory: false,
+                basicProperties: properties,
+                body: body,
+                cancellationToken: token);
+        }, ct);
     }
 
     private async Task<IChannel> EnsureChannelCreatedAsync(CancellationToken ct)
@@ -65,14 +99,6 @@ public sealed class RabbitMqPublisher(
             _connection = await factory.CreateConnectionAsync(ct);
             _channel = await _connection.CreateChannelAsync(cancellationToken: ct);
 
-            await _channel.QueueDeclareAsync(
-                queue: settings.Value.QueueName,
-                durable: true,
-                exclusive: false,
-                autoDelete: false,
-                arguments: null,
-                cancellationToken: ct);
-
             return _channel;
         }
         finally
@@ -90,7 +116,7 @@ public sealed class RabbitMqPublisher(
             _channel = null;
         }
 
-        if (_connection is not null && !_connection.IsOpen)
+        if (_connection is not null)
         {
             await _connection.DisposeAsync();
             _connection = null;

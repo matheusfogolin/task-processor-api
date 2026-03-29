@@ -24,6 +24,7 @@ public static class InfrastructureServiceRegistration
         services.AddSingleton<IJobRepository, JobRepository>();
         services.AddSingleton<IMessageQueuePublisher, RabbitMqPublisher>();
         services.AddSingleton<IMessageQueueConsumer, RabbitMqConsumer>();
+        services.AddSingleton<RabbitMqTopologyInitializer>();
 
         return services;
     }
@@ -34,5 +35,8 @@ public static class InfrastructureServiceRegistration
     {
         var context = serviceProvider.GetRequiredService<MongoDbContext>();
         await context.EnsureIndexesCreatedAsync(ct);
+
+        var topologyInitializer = serviceProvider.GetRequiredService<RabbitMqTopologyInitializer>();
+        await topologyInitializer.InitializeAsync(ct);
     }
 }

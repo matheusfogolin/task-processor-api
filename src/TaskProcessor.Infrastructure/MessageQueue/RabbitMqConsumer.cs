@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -63,13 +64,13 @@ public sealed class RabbitMqConsumer(
                 var deserialized = JsonSerializer.Deserialize<T>(ea.Body.Span);
                 if (deserialized is null)
                 {
-                    logger.LogError(
+                    logger.LogWarning(
                         "Mensagem nula após deserialização. Queue={Queue} DeliveryTag={DeliveryTag}",
                         settings.Value.QueueName,
                         ea.DeliveryTag);
 
-                    await channel.BasicNackAsync(
-                        ea.DeliveryTag, multiple: false, requeue: false);
+                    await PublishToDeadLetterAsync(channel, ea.Body, ea.BasicProperties, CancellationToken.None);
+                    await channel.BasicAckAsync(ea.DeliveryTag, multiple: false);
                     return;
                 }
 
@@ -77,34 +78,48 @@ public sealed class RabbitMqConsumer(
             }
             catch (JsonException ex)
             {
-                logger.LogError(
+                logger.LogWarning(
                     ex,
                     "Falha ao deserializar mensagem. Queue={Queue} DeliveryTag={DeliveryTag}",
                     settings.Value.QueueName,
                     ea.DeliveryTag);
 
-                await channel.BasicNackAsync(
-                    ea.DeliveryTag, multiple: false, requeue: false);
+                await PublishToDeadLetterAsync(channel, ea.Body, ea.BasicProperties, CancellationToken.None);
+                await channel.BasicAckAsync(ea.DeliveryTag, multiple: false);
                 return;
             }
 
             try
             {
                 await handler(message);
-                await channel.BasicAckAsync(
-                    ea.DeliveryTag, multiple: false);
+                await channel.BasicAckAsync(ea.DeliveryTag, multiple: false);
             }
             catch (Exception ex)
             {
-                logger.LogError(
+                var retryCount = GetRetryCount(ea.BasicProperties, settings.Value.QueueName);
+
+                if (retryCount < settings.Value.MaxRetries)
+                {
+                    logger.LogError(
+                        ex,
+                        "Falha ao processar mensagem. Enviando para retry. Queue={Queue} DeliveryTag={DeliveryTag} RetryCount={RetryCount}",
+                        settings.Value.QueueName,
+                        ea.DeliveryTag,
+                        retryCount);
+
+                    await channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: false);
+                    return;
+                }
+
+                logger.LogWarning(
                     ex,
-                    "Falha ao processar mensagem. Queue={Queue} DeliveryTag={DeliveryTag} Requeue={Requeue}",
+                    "Mensagem excedeu limite de retries. Enviando para deadletter. Queue={Queue} DeliveryTag={DeliveryTag} RetryCount={RetryCount}",
                     settings.Value.QueueName,
                     ea.DeliveryTag,
-                    !ea.Redelivered);
+                    retryCount);
 
-                await channel.BasicNackAsync(
-                    ea.DeliveryTag, multiple: false, requeue: !ea.Redelivered);
+                await PublishToDeadLetterAsync(channel, ea.Body, ea.BasicProperties, CancellationToken.None);
+                await channel.BasicAckAsync(ea.DeliveryTag, multiple: false);
             }
         };
 
@@ -117,6 +132,72 @@ public sealed class RabbitMqConsumer(
         var tcs = new TaskCompletionSource();
         using (ct.Register(() => tcs.TrySetResult()))
             await tcs.Task;
+    }
+
+    internal static int GetRetryCount(IReadOnlyBasicProperties properties, string queueName)
+    {
+        if (properties.Headers is null)
+            return 0;
+
+        if (!properties.Headers.TryGetValue("x-death", out var xDeathRaw))
+            return 0;
+
+        if (xDeathRaw is not List<object> xDeath)
+            return 0;
+
+        foreach (var entry in xDeath)
+        {
+            if (entry is not Dictionary<string, object> dict)
+                continue;
+
+            var queue = dict.TryGetValue("queue", out var q)
+                ? q is byte[] qBytes ? Encoding.UTF8.GetString(qBytes) : q as string
+                : null;
+
+            var reason = dict.TryGetValue("reason", out var r)
+                ? r is byte[] rBytes ? Encoding.UTF8.GetString(rBytes) : r as string
+                : null;
+
+            if (queue != queueName || reason != "rejected")
+                continue;
+
+            if (!dict.TryGetValue("count", out var countObj))
+                return 1;
+
+            return countObj switch
+            {
+                long l => (int)l,
+                int i => i,
+                _ => 1
+            };
+        }
+
+        return 0;
+    }
+
+    private async Task PublishToDeadLetterAsync(
+        IChannel channel,
+        ReadOnlyMemory<byte> body,
+        IReadOnlyBasicProperties originalProperties,
+        CancellationToken ct)
+    {
+        var deadLetterExchange = $"{settings.Value.QueueName}-deadletter";
+
+        var properties = new BasicProperties
+        {
+            Persistent = true
+        };
+
+        if (originalProperties.Headers is not null)
+            properties.Headers = new Dictionary<string, object?>(originalProperties.Headers);
+
+        await channel.BasicPublishAsync(
+            exchange: deadLetterExchange,
+            routingKey: deadLetterExchange,
+            mandatory: false,
+            basicProperties: properties,
+            body: body,
+            cancellationToken: ct);
     }
 
     private async Task InitializeAsync(CancellationToken ct)
@@ -139,14 +220,6 @@ public sealed class RabbitMqConsumer(
 
         _connection = await factory.CreateConnectionAsync(ct);
         _channel = await _connection.CreateChannelAsync(cancellationToken: ct);
-
-        await _channel.QueueDeclareAsync(
-            queue: settings.Value.QueueName,
-            durable: true,
-            exclusive: false,
-            autoDelete: false,
-            arguments: null,
-            cancellationToken: ct);
     }
 
     private async Task CleanupChannelAsync()

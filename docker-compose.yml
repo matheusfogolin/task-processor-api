@@ -17,6 +17,9 @@ services:
       - RabbitMQ__UserName=guest
       - RabbitMQ__Password=guest
       - RabbitMQ__QueueName=jobs
+      - RabbitMQ__MaxRetries=3
+      - RabbitMQ__RetryTtlMs=30000
+      - Job__MaxRetries=3
     depends_on:
       mongodb:
         condition: service_healthy
@@ -38,6 +41,9 @@ services:
       - RabbitMQ__UserName=guest
       - RabbitMQ__Password=guest
       - RabbitMQ__QueueName=jobs
+      - RabbitMQ__MaxRetries=3
+      - RabbitMQ__RetryTtlMs=30000
+      - Job__MaxRetries=3
     depends_on:
       mongodb:
         condition: service_healthy
