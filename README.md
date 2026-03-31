@@ -1,6 +1,6 @@
 # Task Processor API
 
-Projeto de estudo que demonstra processamento assíncrono de tarefas (jobs) utilizando **Clean Architecture**, **CQRS** e **mensageria**. A API recebe requisições de criação de jobs, enfileira via RabbitMQ, e um Worker processa em background com lease atômico no MongoDB.
+Processamento assíncrono de tarefas (jobs) utilizando **Clean Architecture**, **Mediator pattern** e **mensageria**. A API recebe requisições de criação de jobs, enfileira via RabbitMQ, e um Worker processa em background com lease atômico no MongoDB.
 
 ## Como Executar o Projeto
 
@@ -55,7 +55,7 @@ docker compose logs -f api
 | MongoDB | Banco de dados (persistência de jobs) |
 | RabbitMQ | Mensageria (fila de criação de jobs) |
 | Docker | Containerização |
-| MediatR | Mediator para CQRS (Commands e Queries) |
+| MediatR | Mediator pattern (Commands e Queries) |
 | FluentValidation | Validação de requests |
 | xUnit | Framework de testes |
 | Moq | Mocking para testes unitários |
@@ -76,7 +76,7 @@ Presentation (API)  →  Application  →  Domain  ←  Infrastructure
 
 ### Padrões e decisões
 
-- **CQRS via MediatR** — Commands (escrita) e Queries (leitura) separados. Handlers independentes facilitam testes e evolução.
+- **Mediator pattern via MediatR** — Commands (escrita) e Queries (leitura) separados em handlers independentes, facilitando testes e evolucao. Nota: nao e CQRS verdadeiro pois compartilha o mesmo modelo e repositorio para leitura e escrita.
 - **Mensageria com RabbitMQ** — Desacopla a criação do job (API publica mensagem) do processamento (Worker consome). A API responde imediatamente sem esperar o processamento.
 - **Lease atômico no MongoDB** — O BackgroundService usa `FindOneAndUpdate` para adquirir jobs com lock atômico (`LockedBy`/`LockedUntil`), evitando processamento duplicado mesmo com múltiplas instâncias do Worker.
 - **Result Pattern** — Erros de negócio retornam `Result<T>` ao invés de lançar exceções. Fluxo explícito e previsível.
